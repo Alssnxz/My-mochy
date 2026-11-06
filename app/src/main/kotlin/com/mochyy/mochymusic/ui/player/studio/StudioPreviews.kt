@@ -136,7 +136,7 @@ internal fun FlagshipPreview(
     val newBottomBar = flagship || turntable
     val barStyle by rememberEnumPreference(
         if (newBottomBar) FlagshipBottomBarStyleKey else PlayerBottomBarStyleKey,
-        PlayerBottomBarStyle.STACK,
+        PlayerBottomBarStyle.VOLUME,
     )
     val transportLayout by rememberEnumPreference(FlagshipTransportLayoutKey, FlagshipTransportLayout.THREE)
     val ambient = rememberAmbientColors()

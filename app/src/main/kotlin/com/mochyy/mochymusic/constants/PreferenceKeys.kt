@@ -22,6 +22,13 @@ val PureBlackKey = booleanPreferencesKey("pureBlack")
 
 // colour of the floating navigation menu, stored as an ARGB int; 0 = the app's default glass
 val NavMenuColorKey = intPreferencesKey("navMenuColor")
+
+// the Local list's own sort, with "custom order" among the choices: the order the user dragged it into
+val LocalSongSortTypeKey = stringPreferencesKey("localSongSortType")
+val LocalSongSortDescendingKey = booleanPreferencesKey("localSongSortDescending")
+
+// the song ids of the Local list in the order the user dragged them, joined by new lines
+val LocalManualOrderKey = stringPreferencesKey("localManualOrder")
 val PureBlackMiniPlayerKey = booleanPreferencesKey("pureBlackMiniPlayer")
 val Enable26RecapKey = booleanPreferencesKey("enable26Recap")
 /** Opens the monthly recap even before the 3rd or with fewer than 10 songs played (Experimental). */

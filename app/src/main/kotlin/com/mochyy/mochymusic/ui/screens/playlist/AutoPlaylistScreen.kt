@@ -43,6 +43,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -81,12 +82,19 @@ import com.mochyy.mochymusic.constants.LastPlayedLikedSongsTimeKey
 import com.mochyy.mochymusic.constants.LikedSongSortDescendingKey
 import com.mochyy.mochymusic.constants.LikedSongSortType
 import com.mochyy.mochymusic.constants.LikedSongSortTypeKey
+import com.mochyy.mochymusic.constants.LocalManualOrderKey
+import com.mochyy.mochymusic.constants.LocalSongSortDescendingKey
+import com.mochyy.mochymusic.constants.LocalSongSortTypeKey
+import com.mochyy.mochymusic.constants.PlaylistSongSortType
 import com.mochyy.mochymusic.constants.SongSortDescendingKey
 import com.mochyy.mochymusic.constants.SongSortType
 import com.mochyy.mochymusic.constants.SongSortTypeKey
 import com.mochyy.mochymusic.constants.YtmSyncKey
 import com.mochyy.mochymusic.db.entities.Song
+import com.mochyy.mochymusic.extensions.move
 import com.mochyy.mochymusic.extensions.toMediaItem
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.rememberReorderableLazyListState
 import com.mochyy.mochymusic.importer.ImportSource
 import com.mochyy.mochymusic.playback.ExoDownloadService
 import com.mochyy.mochymusic.playback.queues.ListQueue
@@ -211,6 +219,12 @@ fun AutoPlaylistScreen(
     val (likedSortType, onLikedSortTypeChange) = rememberEnumPreference(LikedSongSortTypeKey, LikedSongSortType.CREATE_DATE)
     val (likedSortDescending, onLikedSortDescendingChange) = rememberPreference(LikedSongSortDescendingKey, true)
 
+    // the Local list sorts on its own, with "custom order" among the choices: hold a song and drag it
+    val isLocalList = viewModel.playlist == "local"
+    val (localSortType, onLocalSortTypeChange) = rememberEnumPreference(LocalSongSortTypeKey, PlaylistSongSortType.CREATE_DATE)
+    val (localSortDescending, onLocalSortDescendingChange) = rememberPreference(LocalSongSortDescendingKey, true)
+    val isManualOrder = isLocalList && localSortType == PlaylistSongSortType.CUSTOM
+
     val downloadUtil = LocalDownloadUtil.current
     var downloadState by remember { mutableIntStateOf(Download.STATE_STOPPED) }
 
@@ -307,6 +321,38 @@ fun AutoPlaylistScreen(
     }
 
     val state = rememberLazyListState()
+
+    // the order being dragged: a copy of the list that moves while a finger holds a song, saved on letting go
+    val reorderEnabled = isManualOrder && !isSearching && !inSelectMode
+    val manualSongs = remember { mutableStateListOf<Song>() }
+    var orderChanged by remember { mutableStateOf(false) }
+    // the header is the only item above the songs, and only while not searching
+    val headerItems by rememberUpdatedState(if (isSearching) 0 else 1)
+    val reorderableState = rememberReorderableLazyListState(
+        lazyListState = state,
+        scrollThresholdPadding = LocalPlayerAwareWindowInsets.current.asPaddingValues(),
+    ) { from, to ->
+        if (reorderEnabled && from.index >= headerItems && to.index >= headerItems) {
+            val fromIndex = from.index - headerItems
+            val toIndex = to.index - headerItems
+            if (fromIndex in manualSongs.indices && toIndex in manualSongs.indices) {
+                manualSongs.move(fromIndex, toIndex)
+                orderChanged = true
+            }
+        }
+    }
+    LaunchedEffect(songs, isManualOrder) {
+        if (isManualOrder && !reorderableState.isAnyItemDragging) {
+            manualSongs.clear()
+            manualSongs.addAll(songs.orEmpty())
+        }
+    }
+    LaunchedEffect(reorderableState.isAnyItemDragging) {
+        if (!reorderableState.isAnyItemDragging && orderChanged) {
+            orderChanged = false
+            context.dataStore.edit { it[LocalManualOrderKey] = manualSongs.joinToString("\n") { song -> song.id } }
+        }
+    }
     // each new search shows its matches from the first, not from wherever the last one was scrolled (#128)
     LaunchedEffect(query.text) {
         if (isSearching) state.scrollToItem(0)
@@ -499,6 +545,26 @@ fun AutoPlaylistScreen(
                                 onSelect = onLikedSortTypeChange,
                                 onToggleDirection = { onLikedSortDescendingChange(!likedSortDescending) },
                             )
+                        } else if (isLocalList) {
+                            PlaylistSortControl(
+                                current = localSortType,
+                                descending = localSortDescending,
+                                options = PlaylistSongSortType.entries,
+                                label = { type ->
+                                    stringResource(
+                                        when (type) {
+                                            PlaylistSongSortType.CUSTOM -> R.string.sort_by_custom
+                                            PlaylistSongSortType.CREATE_DATE -> R.string.sort_by_create_date
+                                            PlaylistSongSortType.NAME -> R.string.sort_by_name
+                                            PlaylistSongSortType.ARTIST -> R.string.sort_by_artist
+                                            PlaylistSongSortType.PLAY_TIME -> R.string.sort_by_play_time
+                                        }
+                                    )
+                                },
+                                onSelect = onLocalSortTypeChange,
+                                onToggleDirection = { onLocalSortDescendingChange(!localSortDescending) },
+                                showDirection = { it != PlaylistSongSortType.CUSTOM },
+                            )
                         } else {
                             PlaylistSortControl(
                                 current = sortType,
@@ -526,7 +592,7 @@ fun AutoPlaylistScreen(
             }
         }
 
-        val trackRow: @Composable LazyItemScope.(Int, Song) -> Unit = { index, song ->
+        val trackRow: @Composable LazyItemScope.(Int, Song, Modifier) -> Unit = { index, song, dragModifier ->
             val onCheckedChange: (Boolean) -> Unit = {
                 if (it) selection.add(song.id) else selection.remove(song.id)
             }
@@ -548,7 +614,7 @@ fun AutoPlaylistScreen(
                         key = "track_${song.id}",
                         seenState = revealSeen,
                         delayMillis = minOf(index, 8) * 28,
-                    ),
+                    ).then(dragModifier),
                     onClick = {
                         if (inSelectMode) {
                             onCheckedChange(song.id !in selection)
@@ -559,7 +625,8 @@ fun AutoPlaylistScreen(
                         }
                     },
                     onLongClick = {
-                        if (!inSelectMode) {
+                        // in the custom order a long press drags the song, it doesn't start a selection
+                        if (!inSelectMode && !reorderEnabled) {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             inSelectMode = true
                             onCheckedChange(true)
@@ -582,12 +649,29 @@ fun AutoPlaylistScreen(
             }
         }
 
+        // while the order is being set by hand the list shown is the one that moves under the finger
+        val shownSongs = if (reorderEnabled && manualSongs.isNotEmpty()) manualSongs else filteredSongs
+
         if (filteredSections.isEmpty()) {
             itemsIndexed(
-                items = filteredSongs,
+                items = shownSongs,
                 key = { _, song -> song.id },
                 contentType = { _, _ -> "track" },
-            ) { index, song -> trackRow(index, song) }
+            ) { index, song ->
+                if (reorderEnabled) {
+                    ReorderableItem(state = reorderableState, key = song.id) {
+                        trackRow(
+                            index,
+                            song,
+                            Modifier.longPressDraggableHandle(
+                                onDragStarted = { haptic.performHapticFeedback(HapticFeedbackType.LongPress) },
+                            ),
+                        )
+                    }
+                } else {
+                    trackRow(index, song, Modifier)
+                }
+            }
         } else {
             filteredSections.forEach { section ->
                 item(key = "source_${section.source?.key ?: "mochy"}") {
@@ -602,7 +686,7 @@ fun AutoPlaylistScreen(
                     items = section.songs,
                     key = { _, song -> song.id },
                     contentType = { _, _ -> "track" },
-                ) { index, song -> trackRow(index, song) }
+                ) { index, song -> trackRow(index, song, Modifier) }
             }
         }
 

@@ -10,6 +10,10 @@ import com.mochyy.mochymusic.constants.HideExplicitKey
 import com.mochyy.mochymusic.constants.HideVideoSongsKey
 import com.mochyy.mochymusic.constants.LikedSongSortDescendingKey
 import com.mochyy.mochymusic.constants.LikedSongSortType
+import com.mochyy.mochymusic.constants.LocalManualOrderKey
+import com.mochyy.mochymusic.constants.LocalSongSortDescendingKey
+import com.mochyy.mochymusic.constants.LocalSongSortTypeKey
+import com.mochyy.mochymusic.constants.PlaylistSongSortType
 import com.mochyy.mochymusic.constants.LikedSongSortTypeKey
 import com.mochyy.mochymusic.constants.SongSortDescendingKey
 import com.mochyy.mochymusic.constants.SongSortType
@@ -71,6 +75,9 @@ constructor(
         val descending: Boolean,
         val likedSortType: LikedSongSortType,
         val likedDescending: Boolean,
+        val localSortType: PlaylistSongSortType,
+        val localDescending: Boolean,
+        val manualOrder: List<String>,
         val hideExplicit: Boolean,
         val hideVideoSongs: Boolean,
     )
@@ -84,6 +91,9 @@ constructor(
                     descending = it[SongSortDescendingKey] ?: true,
                     likedSortType = it[LikedSongSortTypeKey].toEnum(LikedSongSortType.CREATE_DATE),
                     likedDescending = it[LikedSongSortDescendingKey] ?: true,
+                    localSortType = it[LocalSongSortTypeKey].toEnum(PlaylistSongSortType.CREATE_DATE),
+                    localDescending = it[LocalSongSortDescendingKey] ?: true,
+                    manualOrder = it[LocalManualOrderKey]?.split('\n')?.filter(String::isNotEmpty).orEmpty(),
                     hideExplicit = it[HideExplicitKey] ?: false,
                     hideVideoSongs = it[HideVideoSongsKey] ?: false,
                 )
@@ -112,8 +122,14 @@ constructor(
                         .map { AutoPlaylistSongs(visible(it)) }
 
                     // Local is everything on this device: downloads and imported files together
-                    "local" -> database.onDeviceSongs(sortType, descending)
-                        .map { AutoPlaylistSongs(visible(it)) }
+                    // the Local page has its own sort, with the order the user dragged among the choices
+                    "local" -> database.onDeviceSongs(prefs.localSortType.songSortType, prefs.localDescending)
+                        .map { songs ->
+                            val ordered = if (prefs.localSortType == PlaylistSongSortType.CUSTOM) {
+                                songs.inManualOrder(prefs.manualOrder)
+                            } else songs
+                            AutoPlaylistSongs(visible(ordered))
+                        }
 
                     // the Local page's Liked songs: only the liked songs that are on this device.
                     // Sorted like any song list - the page shows the song sort for it, not Liked's.
@@ -196,3 +212,24 @@ private val LikedSongSortType.songSortType: SongSortType
         LikedSongSortType.ARTIST -> SongSortType.ARTIST
         LikedSongSortType.PLAY_TIME -> SongSortType.PLAY_TIME
     }
+
+/** The custom order has no direction of its own: new songs come in by date, newest first. */
+private val PlaylistSongSortType.songSortType: SongSortType
+    get() = when (this) {
+        PlaylistSongSortType.CUSTOM, PlaylistSongSortType.CREATE_DATE -> SongSortType.CREATE_DATE
+        PlaylistSongSortType.NAME -> SongSortType.NAME
+        PlaylistSongSortType.ARTIST -> SongSortType.ARTIST
+        PlaylistSongSortType.PLAY_TIME -> SongSortType.PLAY_TIME
+    }
+
+/**
+ * The songs in the order the user dragged them into. Songs that came in since then aren't in that
+ * order yet, so they go on top (newest first, as [this] comes), above the ones already placed.
+ */
+private fun List<Song>.inManualOrder(order: List<String>): List<Song> {
+    if (order.isEmpty()) return this
+    val byId = associateBy { it.id }
+    val placed = order.mapNotNull { byId[it] }
+    val placedIds = placed.mapTo(HashSet()) { it.id }
+    return filterNot { it.id in placedIds } + placed
+}

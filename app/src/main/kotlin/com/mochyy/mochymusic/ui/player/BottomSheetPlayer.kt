@@ -348,8 +348,8 @@ private fun PlayerSheet(
     // the colours the new flagship's backdrop and cover fade drift between
     val ambient = rememberAmbientColors()
     // what sits under the play buttons: the card deck or the volume bar, again each flagship with its own
-    val (classicBarStyle, onClassicBarStyle) = rememberEnumPreference(PlayerBottomBarStyleKey, PlayerBottomBarStyle.STACK)
-    val (flagshipBarStyle, onFlagshipBarStyle) = rememberEnumPreference(FlagshipBottomBarStyleKey, PlayerBottomBarStyle.STACK)
+    val (classicBarStyle, onClassicBarStyle) = rememberEnumPreference(PlayerBottomBarStyleKey, PlayerBottomBarStyle.VOLUME)
+    val (flagshipBarStyle, onFlagshipBarStyle) = rememberEnumPreference(FlagshipBottomBarStyleKey, PlayerBottomBarStyle.VOLUME)
     // the Turntable is built on the new flagship, so it takes the new bottom bar rather than the classic's
     val newBottomBar = isFlagship || isTurntable
     // the card under the buttons: the classic's glass, or the new flagship's faint outlined one
